@@ -2,7 +2,7 @@
 # Given the output data from preprocess.py in doc_to_words and 
 # word_to_docs, precompute the sparse vector representations of TF-IDF
 # and BM25.
-# Python 3.11
+# Python 3.9
 # Windows/MacOS/Linux
 
 

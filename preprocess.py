@@ -70,7 +70,7 @@ def get_datastruct_size(data_struct) -> int:
 	return data_size
 
 
-def process_page(page: Union[Tag, NavigableString]) -> str:
+def process_page(item: Union[Tag, NavigableString]) -> str:
 	'''
 	Format and merge the texts from the <title> and <text> tags in the
 		current <page> tag.
@@ -80,21 +80,10 @@ def process_page(page: Union[Tag, NavigableString]) -> str:
 		together.
 	'''
 
-	# Assert correct typing for the page.
-	assert isinstance(page, Tag) or isinstance(page, NavigableString) or page is None,\
-		"Expected page to be a Tag or NavigatableString."
-
-	# Return empty string if page is none.
-	if page is None:
-		return ""
-
-	# Locate the title and text tags (expect to have 1 of each per 
-	# article/page).
-	title_tag = page.find("title")
-	text_tag = page.find("text")
-
-	# Combine the title and text tag texts together.
-	article_text = title_tag.get_text() + "\n\n" + text_tag.get_text()
+	item_html_text = bytes(item.content).decode(
+		"utf-8", errors="ignore"
+	)
+	article_text = BeautifulSoup(item_html_text, "lxml").text
 	
 	# Return the text.
 	return article_text
@@ -178,14 +167,6 @@ def replace_superscripts(text: str) -> str:
 		'⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9'
 	}
 	
-	# result = ""
-	# for char in text:
-	# 	if char in superscript_map:
-	# 		# result += '^' + superscript_map[char]
-	# 		result += superscript_map[char]
-	# 	else:
-	# 		result += char
-	# return result
 	result = []
 	i = 0
 	while i < len(text):
@@ -218,14 +199,6 @@ def replace_subscripts(text: str) -> str:
 		'₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9'
 	}
 	
-	# result = ""
-	# for char in text:
-	# 	if char in superscript_map:
-	# 		# result += '^' + superscript_map[char]
-	# 		result += superscript_map[char]
-	# 	else:
-	# 		result += char
-	# return result
 	result = []
 	i = 0
 	while i < len(text):
@@ -273,11 +246,6 @@ def remove_stopwords(text: str) -> str:
 	'''
 	stop_words = set(stopwords.words("english"))
 	words = word_tokenize(text)
-	# new_text = ""
-	# for word in words:
-	# 	if word not in stop_words and len(word) > 1:
-	# 		new_text = new_text + " " + word
-	# text = new_text
 	text = " ".join(
 		[
 			word for word in words 
@@ -298,21 +266,6 @@ def convert_numbers(text: str) -> str:
 		written expanded representations.
 	'''
 	words = word_tokenize(text)
-	# new_text = ""
-	# for w in words:
-	# 	try:
-	# 		w = num2words(int(w))
-	# 	except:
-	# 		a = 0
-	# 	new_text = new_text + " " + w
-	# new_text = np.char.replace(new_text, "-", " ")
-	# text = new_text
-	# text = " ".join(
-	# 	[
-	# 		num2words(int(word)) for word in words
-	# 		if word.isdigit()
-	# 	]
-	# )
 
 	# Define maximum number string length (10 ^ MAX_LEN).
 	MAX_LEN = 307
@@ -846,7 +799,7 @@ def merge_mappings(results: List[List]) -> Tuple[Dict]:
 	return aggr_doc_to_word, aggr_word_to_doc, aggr_vector_metadata
 
 
-def multiprocess_articles(args: Namespace, device: str, file: str, pages_str: List[str], num_proc: int = 1):
+def multiprocess_articles(args: Namespace, device: str, file: str, entry_ids: List[int], num_proc: int = 1):
 	'''
 	Preprocess the text (in multiple processors).
 	@param: args (Namespace), the arguments passed in from the 
@@ -855,22 +808,24 @@ def multiprocess_articles(args: Namespace, device: str, file: str, pages_str: Li
 		embedding model will use.
 	@param: file (str), the filepath of the current file being
 		processed.
-	@param: pages (List[str]), the raw xml text that is going to be
-		processed.
+	@param: entry_ids (List[int]), the entry IDs to the articles in the
+	 	archive.
 	@param: num_proc (int), the number of processes to use. Default is 
 		1.
 	@return: returns the set of dictionaries containing the necessary 
 		data and metadata to index the articles.
 	'''
-	# Break down the list of pages into chunks.
-	chunk_size = math.ceil(len(pages_str) / num_proc)
+	# Break down the list of pages (entry IDs) into chunks.
+	chunk_size = math.ceil(len(entry_ids) / num_proc)
 	chunks = [
-		pages_str[i:i + chunk_size] 
-		for i in range(0, len(pages_str), chunk_size)
+		entry_ids[i:i + chunk_size] 
+		for i in range(0, len(entry_ids), chunk_size)
 	]
 
 	# Define the arguments list.
-	arg_list = [(args, device, file, chunk) for chunk in chunks]
+	arg_list = [
+		(args, device, file, chunk) for chunk in chunks
+	]
 
 	# Distribute the arguments among the pool of processes.
 	with mp.Pool(processes=num_proc) as pool:
@@ -886,7 +841,7 @@ def multiprocess_articles(args: Namespace, device: str, file: str, pages_str: Li
 	return doc_to_word, word_to_doc, vector_metadata
 
 
-def process_articles(args: Namespace, device: str, file: str, pages_str: List[str]):
+def process_articles(args: Namespace, device: str, file: str, entry_ids: List[int]):
 	'''
 	Preprocess the text (in a single thread/process).
 	@param: args (Namespace), the arguments passed in from the 
@@ -895,18 +850,18 @@ def process_articles(args: Namespace, device: str, file: str, pages_str: List[st
 		embedding model will use.
 	@param: file (str), the filepath of the current file being
 		processed.
-	@param: pages_str (List[str]), the raw xml text that is going to be
-		processed.
+	@param: entry_ids (List[int]), the entry IDs to the articles in the
+	 	archive.
 	@return: returns the set of dictionaries and list containing the 
 		necessary data and metadata to index the articles.
 	'''
+	# Initialize archive.
+	archive = Archive(file)
+
 	# Initialize local mappings.
 	doc_to_word = dict()
 	word_to_doc = dict()
 	vector_metadata = list()
-
-	# Pass each page string into beautifulsoup.
-	pages = [BeautifulSoup(page, "lxml") for page in pages_str]
 
 	# Load the configurations from the config JSON.
 	with open("config.json", "r") as f:
@@ -926,7 +881,7 @@ def process_articles(args: Namespace, device: str, file: str, pages_str: List[st
 
 		# Assert the table for the file exists (should have been
 		# initialized in the for loop in main()).
-		table_name = os.path.basename(file).rstrip(".xml")
+		table_name = os.path.basename(file).rstrip(".zim")
 		current_tables = db.table_names()
 		assert table_name in current_tables, f"Expected table {table_name} to be in list of current tables before vector embedding preprocessing.\nCurrent Tables: {', '.join(current_tables)}"
 
@@ -934,22 +889,12 @@ def process_articles(args: Namespace, device: str, file: str, pages_str: List[st
 		table = db.open_table(table_name)
 
 	# for page in pages:
-	for page in tqdm(pages):
-		# Isolate the article/page's SHA1.
-		sha1_tag = page.find("sha1")
-
-		# Skip articles that don't have a SHA1 (should not be possible 
-		# but you never know).
-		if sha1_tag is None:
-			continue
-
-		# Clean article SHA1 text.
-		article_sha1 = sha1_tag.get_text()
-		article_sha1 = article_sha1.replace(" ", "").replace("\n", "")
+	for entry_id in tqdm(entry_ids):
+		entry = archive._get_entry_by_id(entry_id)
 
 		# Isolate the article/page's raw text. Create copies for each
 		# preprocessing task.
-		article_text = process_page(page)
+		article_text = process_page(entry.get_item())
 
 		###############################################################
 		# BAG OF WORDS
@@ -964,7 +909,7 @@ def process_articles(args: Namespace, device: str, file: str, pages_str: List[st
 			)
 
 			# Update word to document map.
-			file_hash = file + article_sha1
+			file_hash = file + str(entry_id)
 			for word in xml_bow:
 				if word in list(word_to_doc.keys()):
 					# word_to_doc[word].append(file)
@@ -1006,7 +951,7 @@ def process_articles(args: Namespace, device: str, file: str, pages_str: List[st
 				for idx, chunk in enumerate(chunk_metadata):
 					# Update/add the metadata for the source filename
 					# and article SHA1.
-					chunk.update({"file": file, "sha1": article_sha1})
+					chunk.update({"file": file, "entry_id": entry_id})
 
 					# Get original text chunk from text.
 					text_idx = chunk["text_idx"]
@@ -1172,7 +1117,7 @@ def main() -> None:
 	# creating a new, empty table in the vector database).
 	schema = pa.schema([
 		pa.field("file", pa.utf8()),
-		pa.field("sha1", pa.utf8()),
+		pa.field("entry_id", pa.int32()),
 		pa.field("text_idx", pa.int32()),
 		pa.field("text_len", pa.int32()),
 		pa.field("vector", pa.list_(pa.float32(), dims))
@@ -1278,10 +1223,13 @@ def main() -> None:
 
 		# Read in the file.
 		archive = Archive(file)
-		# print(archive.article_count)
-		# print(archive.media_count)
-		# for i in range(archive.article_count):
-		# 	print(archive._get_entry_by_id(i))
+
+		# NOTE:
+		# The libzim package does not support being picked for 
+		# multiprocessing. To counter this, it's easier for each 
+		# processor/thread to initialize its own libzim archive 
+		# instance and use that instead of passing it in from a 
+		# parent worker/thread.
 
 		# Filter out redirect articles and assets (have title as null).
 		entry_ids = []
@@ -1292,49 +1240,6 @@ def main() -> None:
 
 			entry_ids.append(i)
 
-		for entry_id in entry_ids:
-			print(archive._get_entry_by_id(entry_id))
-
-		# >>> dir(archive)
-		# ['__class__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', 
-		# '__ge__', '__getattribute__', '__gt__', '__hash__', '__init__', 
-		# '__init_subclass__', '__le__', '__lt__', '__module__', '__ne__', '__new__', 
-		# '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__setstate__', 
-		# '__sizeof__', '__str__', '__subclasshook__', '_get_entry_by_id', 
-		# 'all_entry_count', 'article_count', 'check', 'checksum', 
-		# 'cluster_cache_current_size', 'cluster_cache_max_size', 
-		# 'dirent_cache_current_size', 'dirent_cache_max_size', 
-		# 'dirent_lookup_cache_max_size', 'entry_count', 'filename', 'filesize', 
-		# 'get_entry_by_path', 'get_entry_by_title', 'get_illustration_item', 
-		# 'get_illustration_sizes', 'get_metadata', 'get_metadata_item', 
-		# 'get_random_entry', 'has_checksum', 'has_entry_by_path', 'has_entry_by_title', 
-		# 'has_fulltext_index', 'has_illustration', 'has_main_entry', 
-		# 'has_new_namespace_scheme', 'has_title_index', 'is_multipart', 'main_entry', 
-		# 'media_count', 'metadata_keys', 'uuid']
-		# >>> archive.media_count
-		# 317191
-		# >>> dir(x) # x is an Entry(url= , title= )
-		# ['__class__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', 
-		# '__ge__', '__getattribute__', '__gt__', '__hash__', '__init__', 
-		# '__init_subclass__', '__le__', '__lt__', '__module__', '__ne__', '__new__', 
-		# '__pyx_vtable__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', 
-		# '__setstate__', '__sizeof__', '__str__', '__subclasshook__', '_index', 
-		# 'get_item', 'get_redirect_entry', 'is_redirect', 'path', 'title']
-		# >>> y.get_item() # y is another Entry() like x
-		# Item(url=Empress_Matilda, title=Empress Matilda)
-		# >>> y_item = y.get_item()
-		# >>> dir(y_item)
-		# ['__class__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', 
-		# '__ge__', '__getattribute__', '__gt__', '__hash__', '__init__', 
-		# '__init_subclass__', '__le__', '__lt__', '__module__', '__ne__', '__new__', 
-		# '__pyx_vtable__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', 
-		# '__setstate__', '__sizeof__', '__str__', '__subclasshook__', '_index', 
-		# 'content', 'mimetype', 'path', 'size', 'title']
-		# >>> bytes(y_item.content).decode("utf-8", errors="ignore") # To get raw html
-		# >>> soup = BeautifulSoup(bytes(y_item.content).decode("utf-8", errors="ignore"), "lxml")
-		# >>> soup.text # To get raw text from html.
-		exit()
-
 		print(f"Processing file ({idx + 1}/{len(data_files)}) {file}...")
 
 		if args.vector:
@@ -1343,29 +1248,13 @@ def main() -> None:
 			# preprocessing would not occur if it were marked), drop
 			# that table (this assumes that the data loading for that 
 			# table is incomplete).
-			table_name = os.path.basename(file).rstrip(".xml")
+			table_name = os.path.basename(file).rstrip(".zim")
 			current_tables = db.table_names()
 			if table_name in current_tables:
 				db.drop_table(table_name)
 
 			# Initialize the fresh table for the current page.
 			db.create_table(table_name, schema=schema)
-
-		# Load the raw text into a beautifulsoup object and extract the
-		# <page> tags.
-		soup = BeautifulSoup(raw_text, "lxml")
-		pages = soup.find_all("page")
-
-		# NOTE:
-		# We convert the list of <page> tags back to str because the
-		# multiprocessing module is not able to handle the Tag | 
-		# NavigableString objects as arguments to its starmap()
-		# function. Even though it may come at a compute cost (some
-		# additional latency), keeps the multiprocessing working which
-		# helps speed up the whole process.
-
-		# Convert each <page> tag in the list of pages to string.
-		pages_str = [str(page) for page in pages]
 
 		# NOTE:
 		# The tqdm package should come with one of the other packages
@@ -1396,11 +1285,11 @@ def main() -> None:
 				device = "cpu"
 
 			doc_to_word, word_to_doc, vector_metadata = multiprocess_articles(
-				args, device, file, pages_str, num_proc=max_proc
+				args, device, file, entry_ids, num_proc=max_proc
 			)
 		else:
 			doc_to_word, word_to_doc, vector_metadata = process_articles(
-				args, device, file, pages_str
+				args, device, file, entry_ids
 			)
 
 		# NOTE:
@@ -1470,21 +1359,19 @@ def main() -> None:
 				print(f"Vector metadata list size {vm_size} Bytes")
 			print(f"Number of entries in vector metadata list: {len(vector_metadata)}")
 
-		# exit()
-
 		# Write metadata to the respective files.
 		if len(list(doc_to_word.keys())) > 0:
 			path = os.path.join(
 				d2w_metadata_path, 
-				os.path.basename(file).rstrip('.xml') + ".json"
+				os.path.basename(file).rstrip('.zim') + ".json"
 			)
 			path_msgpack = os.path.join(
 				d2w_metadata_path,
-				os.path.basename(file).rstrip('.xml') + ".msgpack"
+				os.path.basename(file).rstrip('.zim') + ".msgpack"
 			)
 			path_parquet = os.path.join(
 				d2w_metadata_path,
-				os.path.basename(file).rstrip('.xml') + ".parquet"
+				os.path.basename(file).rstrip('.zim') + ".parquet"
 			)
 			with open(path, "w+") as d2w_f:
 				json.dump(doc_to_word, d2w_f, indent=4)
@@ -1506,15 +1393,15 @@ def main() -> None:
 		if len(list(word_to_doc.keys())) > 0:
 			path = os.path.join(
 				w2d_metadata_path, 
-				os.path.basename(file).rstrip('.xml') + ".json"
+				os.path.basename(file).rstrip('.zim') + ".json"
 			)
 			path_msgpack = os.path.join(
 				w2d_metadata_path, 
-				os.path.basename(file).rstrip('.xml') + ".msgpack"
+				os.path.basename(file).rstrip('.zim') + ".msgpack"
 			)
 			path_parquet = os.path.join(
 				w2d_metadata_path,
-				os.path.basename(file).rstrip('.xml') + ".parquet"
+				os.path.basename(file).rstrip('.zim') + ".parquet"
 			)
 			with open(path, "w+") as w2d_f:
 				json.dump(word_to_doc, w2d_f, indent=4)

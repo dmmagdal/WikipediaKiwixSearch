@@ -12,12 +12,10 @@ Description: Similar to the WikipediaEnSearch (which operates on the full Wikipe
 
 ### Minimum Hardware Specifications
 
- - 64 GB RAM if running download script `download.py`.
-     - Data download script (specifically the decompression step) will OOM on 8GB RAM.
- - 16 GB RAM if running preprocessing script with minimal workers.
-     - Preprocessing script takes around 4 hours (per document) with 4 workers/processors on bag-of-words, so single worker should take around 64 hours (4 hours x 4 workers x 4 documents) to complete for that stage.
-     - Memory overhead under 4 workers (bow or vector) is around 36 GB regardless. 36 / 4 = 9, so 16 GB RAM is recommended at minimum.
- - 24 GB RAM if running the precompute sparse vectors script with one worker.
+ - 8 GB RAM if running download script `download.py`.
+ - 8 GB RAM if running preprocessing script `preprocess.py` with minimal workers.
+     - Note: Was able to run with 8 workers on 8GB RAM and still work just fine.
+ - 24 GB RAM if running the precompute sparse vectors script `precompute_sparse_vectors.py` with one worker.
      - Admittedly, this may be a more RAM intensive than realized.
 
 
@@ -34,9 +32,9 @@ Description: Similar to the WikipediaEnSearch (which operates on the full Wikipe
      - I pulled my wikipedia dumps from [here](https://download.kiwix.org/zim/wikipedia/).
          - Other libraries from Kiwix can be found [here](https://download.kiwix.org/zim/).
          - To validate the `.zim` files, simply append `.sha256` to the end of the URL used to download the `.zim` file. This will lead to the file with the associated SHA256SUM for that file.
- - Programmatic decompression of the downloaded articles `.xml.bz2` uses a ridiculous amount of RAM. I'd say it makes sense to keep a copy of the data in a huggingface datasets repository however, the data is updated on the first and twentieth of every month (meaning the data is updated relatively frequently).
-     - Onboard/built-in archive utility on 8 GB machine is able to handle decompressing the downloaded file bundle without hitting OOM.
-     - Trying to stream with `bz2` with a fixed buffer size also provides no relief on the resources. 
+     - I had to use `libzim` in python because Kiwix uses `.zim` files.
+         - Offers better memory overhead due to lazy loading.
+ - 
  - I should go back an rework the preprocessing pipeline to use rust or something. The time it is taking to run through the dataset (despite it being around 1.8 GB uncompressed vs 95 GB in the uncompressed full Wikipedia dataset) is not acceptable.
      - Possible optimizations:
          - Rewrite in rust.
