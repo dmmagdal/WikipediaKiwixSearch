@@ -31,6 +31,9 @@ Description: Similar to the WikipediaEnSearch (which operates on the full Wikipe
          - Full wikipedia.
          - Simple wikipedia.
          - Along with curated repositories of wikipedia for different topics/subjects.
+     - I pulled my wikipedia dumps from [here](https://download.kiwix.org/zim/wikipedia/).
+         - Other libraries from Kiwix can be found [here](https://download.kiwix.org/zim/).
+         - To validate the `.zim` files, simply append `.sha256` to the end of the URL used to download the `.zim` file. This will lead to the file with the associated SHA256SUM for that file.
  - Programmatic decompression of the downloaded articles `.xml.bz2` uses a ridiculous amount of RAM. I'd say it makes sense to keep a copy of the data in a huggingface datasets repository however, the data is updated on the first and twentieth of every month (meaning the data is updated relatively frequently).
      - Onboard/built-in archive utility on 8 GB machine is able to handle decompressing the downloaded file bundle without hitting OOM.
      - Trying to stream with `bz2` with a fixed buffer size also provides no relief on the resources. 

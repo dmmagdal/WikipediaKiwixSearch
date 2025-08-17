@@ -22,6 +22,7 @@ from typing import List, Dict, Tuple, Union
 from bs4 import BeautifulSoup
 from bs4.element import Tag, NavigableString
 import lancedb
+from libzim.reader import Archive
 import msgpack
 import nltk
 from nltk.corpus import stopwords
@@ -1130,12 +1131,12 @@ def main() -> None:
 		[
 			os.path.join(submodule_data_dir, file) 
 			for file in os.listdir(submodule_data_dir)
-			if file.endswith(".xml")
+			if file.endswith(".zim")
 		]
 	)
 	if len(data_files) == 0:
-		print(f"WikipediaEnDownload submodule has not extracted any articles from the downloader.")
-		print(f"Follow the README.md in the WikipediaEnDownload submodule for instructions on how to download and extract articles from wikipedia.")
+		print(f"download.py script has not extracted any articles from Kiwix.")
+		print(f"Follow the README.md for instructions on how to download and extract wikipedia articles from Kiwix.")
 		exit(1)
 
 	###################################################################
@@ -1276,8 +1277,63 @@ def main() -> None:
 			continue
 
 		# Read in the file.
-		with open(file, "r") as f:
-			raw_text = f.read()
+		archive = Archive(file)
+		# print(archive.article_count)
+		# print(archive.media_count)
+		# for i in range(archive.article_count):
+		# 	print(archive._get_entry_by_id(i))
+
+		# Filter out redirect articles and assets (have title as null).
+		entry_ids = []
+		for i in range(archive.article_count):
+			entry = archive._get_entry_by_id(i)
+			if entry.is_redirect or entry.title == "null":
+				continue
+
+			entry_ids.append(i)
+
+		for entry_id in entry_ids:
+			print(archive._get_entry_by_id(entry_id))
+
+		# >>> dir(archive)
+		# ['__class__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', 
+		# '__ge__', '__getattribute__', '__gt__', '__hash__', '__init__', 
+		# '__init_subclass__', '__le__', '__lt__', '__module__', '__ne__', '__new__', 
+		# '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__setstate__', 
+		# '__sizeof__', '__str__', '__subclasshook__', '_get_entry_by_id', 
+		# 'all_entry_count', 'article_count', 'check', 'checksum', 
+		# 'cluster_cache_current_size', 'cluster_cache_max_size', 
+		# 'dirent_cache_current_size', 'dirent_cache_max_size', 
+		# 'dirent_lookup_cache_max_size', 'entry_count', 'filename', 'filesize', 
+		# 'get_entry_by_path', 'get_entry_by_title', 'get_illustration_item', 
+		# 'get_illustration_sizes', 'get_metadata', 'get_metadata_item', 
+		# 'get_random_entry', 'has_checksum', 'has_entry_by_path', 'has_entry_by_title', 
+		# 'has_fulltext_index', 'has_illustration', 'has_main_entry', 
+		# 'has_new_namespace_scheme', 'has_title_index', 'is_multipart', 'main_entry', 
+		# 'media_count', 'metadata_keys', 'uuid']
+		# >>> archive.media_count
+		# 317191
+		# >>> dir(x) # x is an Entry(url= , title= )
+		# ['__class__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', 
+		# '__ge__', '__getattribute__', '__gt__', '__hash__', '__init__', 
+		# '__init_subclass__', '__le__', '__lt__', '__module__', '__ne__', '__new__', 
+		# '__pyx_vtable__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', 
+		# '__setstate__', '__sizeof__', '__str__', '__subclasshook__', '_index', 
+		# 'get_item', 'get_redirect_entry', 'is_redirect', 'path', 'title']
+		# >>> y.get_item() # y is another Entry() like x
+		# Item(url=Empress_Matilda, title=Empress Matilda)
+		# >>> y_item = y.get_item()
+		# >>> dir(y_item)
+		# ['__class__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', 
+		# '__ge__', '__getattribute__', '__gt__', '__hash__', '__init__', 
+		# '__init_subclass__', '__le__', '__lt__', '__module__', '__ne__', '__new__', 
+		# '__pyx_vtable__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', 
+		# '__setstate__', '__sizeof__', '__str__', '__subclasshook__', '_index', 
+		# 'content', 'mimetype', 'path', 'size', 'title']
+		# >>> bytes(y_item.content).decode("utf-8", errors="ignore") # To get raw html
+		# >>> soup = BeautifulSoup(bytes(y_item.content).decode("utf-8", errors="ignore"), "lxml")
+		# >>> soup.text # To get raw text from html.
+		exit()
 
 		print(f"Processing file ({idx + 1}/{len(data_files)}) {file}...")
 
