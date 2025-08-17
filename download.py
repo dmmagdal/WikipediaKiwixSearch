@@ -112,9 +112,9 @@ def main():
 		files[latest][0],	# link url
 		files[latest][1], 	# local filepath
 	)
-	status = "successfully" if download_status else "unsuccessfully"
-	status += "."
+	status = " successfully." if download_status else " unsuccessfully."
 
+	# Print download message.
 	msg = f"Target file {latest} was downloaded"
 	if args.no_shasum_check:
 		msg += "."

@@ -24,6 +24,13 @@ Description: Similar to the WikipediaEnSearch (which operates on the full Wikipe
 
 ### Notes
 
+ - Kiwix
+     - I decided to use Kiwix because they already do a lot of the work of cleaning up the data for mobile use.
+     - They have many different copies of wikipedia, including:
+         - Wikipedia in different languages.
+         - Full wikipedia.
+         - Simple wikipedia.
+         - Along with curated repositories of wikipedia for different topics/subjects.
  - Programmatic decompression of the downloaded articles `.xml.bz2` uses a ridiculous amount of RAM. I'd say it makes sense to keep a copy of the data in a huggingface datasets repository however, the data is updated on the first and twentieth of every month (meaning the data is updated relatively frequently).
      - Onboard/built-in archive utility on 8 GB machine is able to handle decompressing the downloaded file bundle without hitting OOM.
      - Trying to stream with `bz2` with a fixed buffer size also provides no relief on the resources. 
