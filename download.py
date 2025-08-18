@@ -19,8 +19,8 @@ def main():
 	parser.add_argument(
 		"--target", 
 		nargs="?",
-		default="all-simple-maxi", 
-		help="Specify which (compressed) file(s) you want to download. Default is 'all-simple-maxi'."
+		default="simple-all-maxi", 
+		help="Specify which (compressed) file(s) you want to download. Default is 'simple-all-maxi'."
 	)
 	parser.add_argument(
 		"--no-shasum-check", 
@@ -49,7 +49,7 @@ def main():
 	target = args.target
 	valid_targets = list(target_mapping.keys())
 	if target not in valid_targets:
-		print(f"Download argument 'target' {target} not valid target.")
+		print(f"Download argument '--target' {target} not valid target.")
 		print(f"Please specify one of the following for the target: {valid_targets}")
 		exit(1)
 
