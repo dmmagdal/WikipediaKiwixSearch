@@ -145,45 +145,34 @@ def clear_staging_folders(staging_folders: List[str]) -> None:
 		clear_folder(folder)
 
 
-def isolate_invalid_articles(pages: List[str]) -> List[str]:
+def isolate_invalid_articles(entry_ids: List[int], file: str) -> List[str]:
 	'''
 	Isolate the invalid articles away from the valid ones.
-	@param: pages (List[str]), the list of articles parsed by 
-		beautifulsoup that need to be analyzed.
-	@return, returns a list containing the SHA1 strings of all invalid
+	@param: pages (List[int]), the list of article IDs that need to be 
+		analyzed.
+	@return, returns a list containing the URL strings of all invalid
 		articles from the input list.
 	'''
-	# Initialize a list to store the article SHA1's for all invalid
+	# Initialize a list to store the article URL's for all invalid
 	# articles.
-	redirect_shas = list()
+	redirect_ids = list()
+
+	# Read file.
+	archive = Archive(file)
 
 	# Iterate through each article.
-	for page_str in tqdm(pages):
-		# Parse page with beautifulsoup.
-		page = BeautifulSoup(page_str, "lxml")
-
-		# Isolate the article/page's SHA1.
-		sha1_tag = page.find("sha1")
-
-		# Skip articles that don't have a SHA1 (should not be 
-		# possible but you never know).
-		if sha1_tag is None:
-			continue
-
-		# Clean article SHA1 text.
-		article_sha1 = sha1_tag.get_text()
-		article_sha1 = article_sha1.replace(" ", "").replace("\n", "")
-
-		# Isolate the article/page's redirect tag.
-		redirect_tag = page.find("redirect")
+	for entry_id in entry_ids:
+		# Isolate the article/page's URL.
+		item = archive._get_entry_by_id(entry_id)
+		url = item.path
 
 		# Skip articles that have a redirect tag (they have no 
 		# useful information in them).
-		if redirect_tag is not None:
-			redirect_shas.append(article_sha1)
+		if item.is_redirect or url == "null":
+			redirect_ids.append(url)
 
-	# Return the list of invalid article SHAs.
-	return redirect_shas
+	# Return the list of invalid article URLs.
+	return redirect_ids
 
 
 def get_document_lengths(doc_to_words: Dict[str, Dict[str, int]]) -> List[int]:
@@ -484,28 +473,20 @@ def main():
 			basename = os.path.basename(file)
 			print(f"Processing {basename} ({idx + 1}/{len(data_xml_files)})")
 
-			# Open the file.# Load in file.
-			with open(file, "r") as f:
-				raw_data = f.read()
-
-			# Parse file with beautifulsoup. Isolate the articles.
-			soup = BeautifulSoup(raw_data, "lxml")
-			pages = soup.find_all("page")
-			if pages is None:
-				continue
-			else:
-				pages = [str(page) for page in pages]
+			# Load the file and get the list of entry ites.
+			archive = Archive(file)
+			entry_ids = [i for i in range(archive.article_count)]
 
 			# Chunk the data to enable concurrency/parallelism.
-			chunk_size = math.ceil(len(pages) / max_workers)
+			chunk_size = math.ceil(len(entry_ids) / max_workers)
 			pages_list = [
-				pages[i:i + chunk_size] 
-				for i in range(0, len(pages), chunk_size)
+				entry_ids[i:i + chunk_size] 
+				for i in range(0, len(entry_ids), chunk_size)
 			]
 			args_list = [
-				(pages_sublist,) for pages_sublist in pages_list
+				(pages_sublist, file) for pages_sublist in pages_list
 			]
-			sha_list = list()
+			url_list = list()
 
 			# Scan for invalid articles.
 			if num_proc > 1:
@@ -514,7 +495,7 @@ def main():
 						isolate_invalid_articles, args_list
 					)
 					for result in results:
-						sha_list += result
+						url_list += result
 			else:
 				with ThreadPoolExecutor(max_workers) as executor:
 					results = executor.map(
@@ -522,11 +503,11 @@ def main():
 						args_list
 					)
 					for result in results:
-						sha_list += result
+						url_list += result
 
 			# Update redirect files map with the findings from the current 
 			# file.
-			redirect_files.update({file: sha_list})
+			redirect_files.update({file: url_list})
 
 		# Flatten data.
 		redirect_data = list()
