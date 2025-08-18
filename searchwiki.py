@@ -16,6 +16,7 @@ import shutil
 import time
 from typing import Any, Dict, List, Tuple
 
+from libzim.reader import Archive
 import numpy as np
 import pandas as pd
 import requests
@@ -33,7 +34,7 @@ seed = 1234
 random.seed(seed)
 np.random.seed(seed)
 set_seed(seed)
-torch.use_deterministic_algorithms(True)
+# torch.use_deterministic_algorithms(True)
 
 
 def generate_question(passage: str, model_name: str, device: str) -> str:
@@ -179,8 +180,12 @@ def get_random_paragraph_from_article(article_text: str) -> str:
 	# Split article text by paragraph and remove all empty string 
 	# entries.
 	split_text = [
-		text.strip() for text in article_text.split("\n\n") if text.strip()
+		# text.strip() for text in article_text.split("\n\n") if text.strip()
+		text.strip() for text in article_text.split("\n") if text.strip()
 	]
+
+	# Initialize a special string that appears in all Wikipedia articles.
+	special_string = "This article is issued from Wikipedia. The text is available under Creative Commons Attribution-Share Alike 4.0 unless otherwise noted. Additional terms may apply for the media files."
 
 	# Crude wiki markup cleanup.
 	for idx, text in enumerate(split_text):
@@ -198,7 +203,13 @@ def get_random_paragraph_from_article(article_text: str) -> str:
 		# If a paragraph (split along individual newline characters) is
 		# too long (indicating some sort of table or other structure),
 		# nullify the weight for that paragraph.
-		if len(text.split("\n")) > 5:
+		# if len(text.split("\n")) > 5:
+		# 	weight = math.ceil(weight * 0.01)
+
+		# This special string is available in all Wikipedia articles
+		# and therefore provides no value. Reduce the weight for lines
+		# that contain this string.
+		if special_string in text:
 			weight = math.ceil(weight * 0.01)
 
 		# Append the weight to the list.
@@ -228,13 +239,13 @@ def get_article_entries(articles: List[str]) -> List[Tuple[str, str, str, str]]:
 	file_sha_map = dict()
 	for article in articles:
 		# Split the file and SHA1.
-		split_string = article.split(".xml")
+		split_string = article.split(".zim")
 		if len(split_string) != 2:
 			results.append((article, "", "", ""))
 			continue
 
 		# Isolate the file, SHA1, and article text.
-		file, sha = split_string[0] + ".xml", split_string[1]
+		file, sha = split_string[0] + ".zim", int(split_string[1])
 		if file in file_sha_map:
 			file_sha_map[file].append(sha)
 		else:
@@ -244,8 +255,13 @@ def get_article_entries(articles: List[str]) -> List[Tuple[str, str, str, str]]:
 		texts = load_article_text(file, sha_list)
 
 		for idx, text in enumerate(texts):
-			sha = sha_list[idx]
+			sha = str(sha_list[idx])
 			results.append((file + sha, text, file, sha))
+
+	# NOTE/TODO:
+	# The flip flop of converting the "sha" variable between int and 
+	# str is not safe in terms of readability and debuggability but
+	# I'll fix this later.
 
 	# Return the results.
 	return results

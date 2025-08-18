@@ -25,6 +25,7 @@ from typing import List, Dict, Tuple, Union
 from bs4 import BeautifulSoup
 from bs4.element import Tag, NavigableString
 import lancedb
+from libzim.reader import Archive
 import msgpack
 import numpy as np
 import pandas as pd
@@ -62,17 +63,16 @@ def hashSum(data: str) -> str:
 	return sha256.hexdigest()
 
 
-def load_article_xml_file(path: str) -> str:
+def load_article_zim_file(path: str) -> Archive:
 	'''
 	Load an xml file from the given path.
 	@param: path (str), the path of the xml file that is to be loaded.
 	@return: Returns the xml file contents.
 	'''
-	with open(path, "r") as f:
-		return f.read()
+	return Archive(path)
 
 
-def load_article_text(path: str, sha1_list: List[str]) -> List[str]:
+def load_article_text(path: str, entry_ids: List[int]) -> List[str]:
 	'''
 	Load the specified articles from an xml file given the path.
 	@param: path (str), the path of the xml file that is to be loaded.
@@ -80,47 +80,22 @@ def load_article_text(path: str, sha1_list: List[str]) -> List[str]:
 		articles.
 	@return: Returns a list containing the article text of each file.
 	'''
-	# Load the (xml) file.
-	file = load_article_xml_file(path)
+	# Load the (zim) file.
+	archive = load_article_zim_file(path)
 
-	# Parse the file with beautifulsoup.
-	soup = BeautifulSoup(file, "lxml")
-
-	# Initialize list with default return values for all SHA1s passed
-	# into the SHA1 list argument.
+	# Initialize list with default return values for all entry IDs 
+	# passed into the entry IDs argument.
 	articles = [
-		f"ERROR: COULD NOT LOCATE ARTICLE {sha1_hash} in {path}"
-		for sha1_hash in sha1_list
+		f"ERROR: COULD NOT LOCATE ARTICLE {entry_id} in {path}"
+		for entry_id in entry_ids
 	]
 
-	# Iterate through every article/page in the file.
-	for page in soup.find_all("page"):
-		# Isolate the article/page's SHA1.
-		sha1_tag = page.find("sha1")
+	# Iterate through the list of entry IDs.
+	for idx, entry_id in enumerate(entry_ids):
+		entry = archive._get_entry_by_id(entry_id)
 
-		# Skip articles that don't have a SHA1 (should not be possible 
-		# but you never know).
-		if sha1_tag is None:
-			continue
-
-		# Clean article SHA1 text.
-		article_sha1 = sha1_tag.get_text()
-		article_sha1 = article_sha1.replace(" ", "").replace("\n", "")
-
-		# If the article/page's SHA1 matches one of the values in the 
-		# SHA1 list, load the text for that article in the appropriate
-		# spot in the list.
-		if article_sha1 in sha1_list:
-			sha1_index = sha1_list.index(article_sha1)
-			articles[sha1_index] = process_page(page)
-
-	# NOTE
-	# The above process is a linear operation. It can be optimized for
-	# multithreading/processing. There is also no "smart" or clever way
-	# to just isolate pages with the desired SHA1 hashes on account of 
-	# the fact that the strings containing the hashes are dirty in the
-	# original file (they contain white space and newline characters)
-	# so a string match becomes a bit difficult.
+		# Get the text for that article.
+		articles[idx] = process_page(entry.get_item())
 
 	# Return the list of article texts.
 	return articles
@@ -227,8 +202,8 @@ def print_results(results: List, search_type: str = "tf-idf") -> None:
 	for result in results:
 		# Deconstruct the results.
 		score, document, text, indices = result
-		doc, sha1 = os.path.basename(document).split(".xml")
-		doc += ".xml"
+		doc, sha1 = os.path.basename(document).split(".zim")
+		doc += ".zim"
 
 		# Print the results out.
 		print(f"Score: {score}")
@@ -861,8 +836,8 @@ class BagOfWords:
 
 		# for folder, name in basenames:
 		for _, name in basenames:
-			file_basename, article_hash = name.split(".xml")
-			file_basename += ".xml"
+			file_basename, article_hash = name.split(".zim")
+			file_basename += ".zim"
 			# file = os.path.join(folder, file_basename)
 			file = file_basename
 
@@ -999,7 +974,7 @@ class TF_IDF(BagOfWords):
 		files_to_docs = dict()
 		for id in tqdm(document_ids):
 			match = re.search(
-				r"(pages-articles-multistream_[a-f0-9]+\.xml)", id
+				r"(wikipedia_en.*?\.zim)", id
 			)
 
 			if match:
@@ -1008,7 +983,7 @@ class TF_IDF(BagOfWords):
 				xml_basename = match.group(1)
 				sparse_vector_file = os.path.join(
 					self.sparse_vectors_folder, 
-					xml_basename.replace(".xml", ".parquet")
+					xml_basename.replace(".zim", ".parquet")
 				)
 
 				# Validate sparse vector file and add current document 
@@ -1073,8 +1048,9 @@ class TF_IDF(BagOfWords):
 		file_sha_map = dict()
 		for result in corpus_tfidf:
 			document_sha1 = result[1]
-			document, sha1 = os.path.basename(document_sha1).split(".xml")
-			document = os.path.join(self.documents_folder, document + ".xml")
+			document, sha1 = os.path.basename(document_sha1).split(".zim")
+			document = os.path.join(self.documents_folder, document + ".zim")
+			sha1 = int(sha1)
 
 			if document in file_sha_map:
 				file_sha_map[document].append(sha1)
@@ -1105,8 +1081,9 @@ class TF_IDF(BagOfWords):
 			# Extract the document path and SHA1 and use them to load 
 			# the article text.
 			document_sha1 = result[1]
-			document, sha1 = os.path.basename(document_sha1).split(".xml")
-			document = os.path.join(self.documents_folder, document + ".xml")
+			document, sha1 = os.path.basename(document_sha1).split(".zim")
+			document = os.path.join(self.documents_folder, document + ".zim")
+			sha1 = int(sha1)
 			# text = load_article_text(document, [sha1])[0]
 			texts = file_text_map[document]
 			text_idx = file_sha_map[document].index(sha1)
@@ -1271,7 +1248,7 @@ class BM25(BagOfWords):
 		files_to_docs = dict()
 		for id in tqdm(document_ids):
 			match = re.search(
-				r"(pages-articles-multistream_[a-f0-9]+\.xml)", id
+				r"(pages-articles-multistream_[a-f0-9]+\.zim)", id
 			)
 
 			if match:
@@ -1280,7 +1257,7 @@ class BM25(BagOfWords):
 				xml_basename = match.group(1)
 				sparse_vector_file = os.path.join(
 					self.sparse_vectors_folder, 
-					xml_basename.replace(".xml", ".parquet")
+					xml_basename.replace(".zim", ".parquet")
 				)
 
 				# Validate sparse vector file and add current document 
@@ -1304,8 +1281,9 @@ class BM25(BagOfWords):
 		file_sha_map = dict()
 		for result in corpus_bm25:
 			document_sha1 = result[1]
-			document, sha1 = os.path.basename(document_sha1).split(".xml")
-			document = os.path.join(self.documents_folder, document + ".xml")
+			document, sha1 = os.path.basename(document_sha1).split(".zim")
+			document = os.path.join(self.documents_folder, document + ".zim")
+			sha1 = int(sha1)
 
 			if document in file_sha_map:
 				file_sha_map[document].append(sha1)
@@ -1330,8 +1308,9 @@ class BM25(BagOfWords):
 			# Extract the document path and SHA1 and use them to load 
 			# the article text.
 			document_sha1 = result[1]
-			document, sha1 = os.path.basename(document_sha1).split(".xml")
-			document = os.path.join(self.documents_folder, document + ".xml")
+			document, sha1 = os.path.basename(document_sha1).split(".zim")
+			document = os.path.join(self.documents_folder, document + ".zim")
+			sha1 = int(sha1)
 			# text = load_article_text(document, [sha1])[0]
 			texts = file_text_map[document]
 			text_idx = file_sha_map[document].index(sha1)
@@ -1597,9 +1576,10 @@ class VectorSearch:
 		# Iterate through the document ids.
 		for doc_idx in tqdm(range(len(document_ids))):
 			document_id = document_ids[doc_idx]
-			# document, sha1 = os.path.basename(document_id).split(".xml")
-			document, sha1 = document_id.split(".xml")	# Use this because we're not able to load_article_text if full path is not present.
-			document += ".xml"
+			# document, sha1 = os.path.basename(document_id).split(".zim")
+			document, sha1 = document_id.split(".zim")	# Use this because we're not able to load_article_text if full path is not present.
+			document += ".zim"
+			sha1 = int(sha1)
 
 			# Load the article text. Loading from stage 1 search 
 			# results is faster than loading from file.
@@ -1653,7 +1633,7 @@ class VectorSearch:
 		file_sha_map = dict()
 		for result in results:
 			file = result["file"]
-			sha = result["sha1"]
+			sha = int(result["sha1"])
 			if file in file_sha_map:
 				file_sha_map[file].append(sha)
 			else:
@@ -1670,15 +1650,15 @@ class VectorSearch:
 			# file (file + sha1). This should reduce the IO overhead
 			# for loading the text data in the results.
 			for idx, text in enumerate(texts):
-				file_text_map[file + sha_list[idx]] = text
+				file_text_map[file + str(sha_list[idx])] = text
 
 		# Format search results.
 		results = [
 			tuple([
 				result["_distance"], 
-				result["file"] + result["sha1"], 
+				result["file"] + str(result["sha1"]), 
 				# load_article_text(result["file"], [result["sha1"]]),	# Too slow.
-				file_text_map[result["file"] + result["sha1"]],
+				file_text_map[result["file"] + (str)],
 				[
 					result["text_idx"], 
 					result["text_idx"] + result["text_len"]
