@@ -18,6 +18,7 @@ import string
 from typing import Dict, List, Set, Union
 
 from bs4 import BeautifulSoup
+from libzim.reader import Archive
 import msgpack
 from tqdm import tqdm
 import pandas as pd
@@ -459,7 +460,7 @@ def main():
 	data_xml_files = [
 		os.path.join(data_folder, file)
 		for file in os.listdir(data_folder)
-		if file.endswith(".xml")
+		if file.endswith(".zim")
 	]
 
 	###################################################################
@@ -579,7 +580,7 @@ def main():
 			# ignore invalid articles).
 			query_file = os.path.join(
 				data_folder,
-				basename.replace(extension, ".xml")
+				basename.replace(extension, ".zim")
 			)
 			invalid_articles = redirect_files_df.loc[
 				redirect_files_df["file"] == query_file, "articles"
@@ -732,7 +733,7 @@ def main():
 		# invalid articles).
 		query_file = os.path.join(
 			data_folder,
-			basename.replace(extension, ".xml")
+			basename.replace(extension, ".zim")
 		)
 		invalid_articles = redirect_files_df.loc[
 			redirect_files_df["file"] == query_file, "articles"

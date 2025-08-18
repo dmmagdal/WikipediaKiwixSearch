@@ -15,6 +15,8 @@ Description: Similar to the WikipediaEnSearch (which operates on the full Wikipe
  - 8 GB RAM if running download script `download.py`.
  - 8 GB RAM if running preprocessing script `preprocess.py` with minimal workers.
      - Note: Was able to run with 8 workers on 8GB RAM and still work just fine.
+     - Used 16 - 43 GB RAM (and took around 10.5 hours) when running with 28 workers.
+         - I think the actual usage was around 27 GB RAM.
  - 24 GB RAM if running the precompute sparse vectors script `precompute_sparse_vectors.py` with one worker.
      - Admittedly, this may be a more RAM intensive than realized.
 
