@@ -180,8 +180,10 @@ def get_random_paragraph_from_article(article_text: str) -> str:
 	# Split article text by paragraph and remove all empty string 
 	# entries.
 	split_text = [
-		# text.strip() for text in article_text.split("\n\n") if text.strip()
-		text.strip() for text in article_text.split("\n") if text.strip()
+		text.strip() 
+		for text in article_text.split("\n\n") # Better chances of longer passages
+		# for text in article_text.split("\n") # More "natural" but shorter passages (will impact performance)
+		if text.strip()	
 	]
 
 	# Initialize a special string that appears in all Wikipedia articles.
@@ -483,10 +485,7 @@ def test(print_search: bool = False) -> None:
 	)
 	print("Sampled 5 articles.")
 
-	# TODO: Fix this bottleneck. Takes a few minutes. Consider rust
-	# extension? Not super critical since I got it down from 6 minutes 
-	# to ~3 minutes. Biggest bottleneck is probably the file IO of 
-	# parsing through files and getting the exact article texts.
+	# Loading articles.
 	start = time.perf_counter()
 	article_entries = get_article_entries(selected_docs)
 	end = time.perf_counter()
@@ -513,9 +512,8 @@ def test(print_search: bool = False) -> None:
 
 	# NOTE:
 	# Mean search times for each search engine.
-	# TF-IDF: ~360s (or 6 min)
-	# BM25: ~390s (or 6.5 min)
-	# Current bottleneck is the text loading. 
+	# TF-IDF: ~26s
+	# BM25: ~19s
 
 	# Iterate through each search engine (sparse vector engines only/
 	# TF-IDF & BM25).
@@ -597,10 +595,11 @@ def test(print_search: bool = False) -> None:
 
 	# NOTE:
 	# Mean search times for each search engine.
-	# TF-IDF: ~s (or  min)
-	# BM25: ~s (or  min)
-	# ReRank: ~s (or  min)
-	# Current bottleneck is the text loading. 
+	# TF-IDF: ~29s
+	# BM25: ~19s
+	# ReRank: ~770s (or 13 min)
+	# Bottleneck on ReRank is computing the embeddings at runtime
+	# instead of pre-cached embeddings.
 	
 	# Iterate through each search engine.
 	for name, engine in search_engines:

@@ -1248,7 +1248,7 @@ class BM25(BagOfWords):
 		files_to_docs = dict()
 		for id in tqdm(document_ids):
 			match = re.search(
-				r"(pages-articles-multistream_[a-f0-9]+\.zim)", id
+				r"(wikipedia_en.*?\.zim)", id
 			)
 
 			if match:
@@ -1494,14 +1494,14 @@ class VectorSearch:
 		# creating a new, empty table in the vector database).
 		self.schema = pa.schema([
 			pa.field("file", pa.utf8()),
-			pa.field("sha1", pa.utf8()),
+			pa.field("entry_id", pa.int32()),
 			pa.field("text_idx", pa.int32()),
 			pa.field("text_len", pa.int32()),
 			pa.field("vector", pa.list_(pa.float32(), self.dims))
 		])
 
 
-	def search(self, query: str, max_results: int = 50, document_ids: List = [], docs_are_results: bool = False):
+	def search(self, query: str, max_results: int = 50, document_ids: List[str] = [], docs_are_results: bool = False):
 		'''
 		Conducts a search on the wikipedia data with vector search.
 		@param: query str, the raw text that is being queried from the
@@ -1597,7 +1597,7 @@ class VectorSearch:
 			for idx, chunk in enumerate(chunk_metadata):
 				# Update/add the metadata for the source filename
 				# and article SHA1.
-				chunk.update({"file": document, "sha1": sha1})
+				chunk.update({"file": document, "entry_id": sha1})
 
 				# Get original text chunk from text.
 				text_idx = chunk["text_idx"]
@@ -1633,7 +1633,7 @@ class VectorSearch:
 		file_sha_map = dict()
 		for result in results:
 			file = result["file"]
-			sha = int(result["sha1"])
+			sha = int(result["entry_id"])
 			if file in file_sha_map:
 				file_sha_map[file].append(sha)
 			else:
@@ -1656,9 +1656,9 @@ class VectorSearch:
 		results = [
 			tuple([
 				result["_distance"], 
-				result["file"] + str(result["sha1"]), 
-				# load_article_text(result["file"], [result["sha1"]]),	# Too slow.
-				file_text_map[result["file"] + (str)],
+				result["file"] + str(result["entry_id"]), 
+				# load_article_text(result["file"], [result["entry_id"]]),	# Too slow.
+				file_text_map[result["file"] + str(result["entry_id"])],
 				[
 					result["text_idx"], 
 					result["text_idx"] + result["text_len"]
