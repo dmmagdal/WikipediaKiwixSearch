@@ -416,7 +416,7 @@ def bow_preprocessing(text: str, return_word_freq: bool=False):
 	return tuple([bag_of_words, word_freqs])
 
 
-def vector_preprocessing(article_text: str, config: Dict, tokenizer: AutoTokenizer) -> List[Dict]:
+def vector_preprocessing(article_text: str, config: Dict, tokenizer: AutoTokenizer, recursive_split: bool = False) -> List[Dict]:
 	'''
 	Preprocess the text to yield a list of chunks of the tokenized 
 		text. Each chunk is the longest possible set of text that can 
@@ -428,6 +428,9 @@ def vector_preprocessing(article_text: str, config: Dict, tokenizer: AutoTokeniz
 		such as context length.
 	@param: tokenizer (AutoTokenizer), the tokenizer for the embedding
 		model.
+	@param: recursive_split (bool), whether to use the recursive 
+		splitting scheme for long text chunks or a more basic one. Is
+		false by default.
 	@return: returns a List[Dict] of the text metadata. This metadata 
 		includes the split text's token sequence, index (with respect
 		to the input text), and length of the text split for each split
@@ -438,7 +441,7 @@ def vector_preprocessing(article_text: str, config: Dict, tokenizer: AutoTokeniz
 	model_name = config["vector-search_config"]["model"]
 	model_config = config["models"][model_name]
 	context_length = model_config["max_tokens"]
-	# overlap = config["preprocessing"]["token_overlap"]
+	overlap = config["preprocessing"]["token_overlap"]
 
 	# Make sure that the overlap does not exceed the model context
 	# length.
@@ -456,7 +459,7 @@ def vector_preprocessing(article_text: str, config: Dict, tokenizer: AutoTokeniz
 	# metadata. 
 
 	# NOTE:
-	# Splitting scheme:
+	# Splitting scheme 1 (recursive split):
 	# 1) Split into paragraphs (split by newline ("\n\n", "\n") 
 	#	characters). This is covered by the high_level_split() 
 	#	recursive function.
@@ -464,6 +467,12 @@ def vector_preprocessing(article_text: str, config: Dict, tokenizer: AutoTokeniz
 	#	split) and "" (character level split)). This is covered by the
 	#	low_level_split() recursive function that is called by the
 	#	high_level_split() recursive function when such is the case.
+	# Splitting scheme 2 (direct/basic split):
+	# 1) Split into paragraphs (split by newline ("\n\n", "\n") 
+	#	characters). 
+	# 2) Split paragraphs that are too long (split by token lengths
+	#	with some overlap, recycle the text metadata for all chunks in
+	# 	that paragraph).
 
 	# Initialize splitters list and text metadata list. The splitters
 	# are the same as default on RecursiveCharacterTextSplitter.
@@ -472,11 +481,86 @@ def vector_preprocessing(article_text: str, config: Dict, tokenizer: AutoTokeniz
 
 	# Add to the metadata list by passing the text to the high level
 	# recursive splitter function.
-	metadata += high_level_split(
-		article_text, 0, tokenizer, context_length, splitters
-	)
+	if recursive_split:
+		metadata += high_level_split(
+			article_text, 0, tokenizer, context_length, splitters
+		)
+	else:
+		metadata = direct_split(
+			article_text, overlap, tokenizer, context_length, splitters[0]
+		)
 	
 	# Return the text metadata.
+	return metadata
+
+
+def direct_split(text: str, offset: int, tokenizer: AutoTokenizer, context_length: int, splitter: str) -> List[Dict]:
+	assert offset < context_length, \
+		f"offset ({offset}) must be less than the maximum context length ({context_length})"
+	
+	# Initialize the metadata list.
+	metadata = []
+
+	# Split the text.
+	text_splits = text.split(splitter)
+
+	# Iterate through the list 
+	for split in text_splits:
+		# Skip the split if it is an empty string.
+		if split == "":
+			continue
+
+		# Get the split metadata (index with respect to original text 
+		# plus offset and split length).
+		split_idx = text.index(split) #+ offset
+		split_len = len(split)
+
+		# Tokenize the split.
+		tokens = tokenizer.encode(split, add_special_tokens=False)
+
+		if len(tokens) <= context_length:
+			# If the token sequence is less than or equal to the 
+			# context length, tokenize the text split again (this time
+			# with padding), and add the entry to the metadata.
+			tokens = tokenizer.encode(
+				split, 
+				add_special_tokens=False, 
+				padding="max_length"
+			)
+			metadata.append({
+				"tokens": tokens,
+				"text_idx": split_idx,
+				"text_len": split_len
+			})
+		else:
+			# If the token sequence is greater than the context length,
+			# split the embeddings/tokens with some overlap and recycle
+			# the text metadata for all splits.
+			step = context_length - offset
+			pad_token_id = tokenizer.pad_token_id
+
+			for start in range(0, len(tokens), step):
+				end = start + context_length
+				chunk = tokens[start:end]
+
+				# Pad last chunk if shorter than context_length
+				if len(chunk) < context_length:
+					chunk = chunk + [pad_token_id] * (context_length - len(chunk))
+
+				metadata.append({
+					"tokens": chunk,
+					"text_idx": split_idx,
+					"text_len": split_len
+				})
+
+				if end >= len(tokens):
+					break
+
+	assert(
+		all(len(data["tokens"]) == context_length for data in metadata)
+	), f"Expected all tokens to be the {context_length} long."
+
+	# Return the metadata.
 	return metadata
 
 
@@ -942,7 +1026,8 @@ def process_articles(args: Namespace, device: str, file: str, entry_ids: List[in
 			# metadata (such as the respective index in the original
 			# text for each chunk and the length of the chunk).
 			chunk_metadata = vector_preprocessing(
-				article_text_v_db, config, tokenizer
+				article_text_v_db, config, tokenizer, 
+				recursive_split=True
 			)
 
 			# Disable gradients.

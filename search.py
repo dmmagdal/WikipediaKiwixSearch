@@ -1602,7 +1602,8 @@ class VectorSearch:
 				# Get original text chunk from text.
 				text_idx = chunk["text_idx"]
 				text_len = chunk["text_len"]
-				text_chunk = article_text[text_idx: text_idx + text_len]
+				# text_chunk = article_text[text_idx: text_idx + text_len]
+				text_chunk = chunk["tokens"]
 
 				# Embed the text chunk.
 				embedding = self.embed_text(text_chunk)
@@ -1674,19 +1675,30 @@ class VectorSearch:
 		return results
 
 
-	def embed_text(self, text: str):
+	def embed_text(self, text: Union[str, List[int]]):
 		# Disable gradients.
 		with torch.no_grad():
-			# Pass original text chunk to tokenizer. Ensure the data is
-			# passed to the appropriate (hardware) device.
-			output = self.model(
-				**self.tokenizer(
-					text,
-					add_special_tokens=False,
-					padding="max_length",
-					return_tensors="pt"
+			if isinstance(text, str):
+				# Pass original text chunk to tokenizer. Ensure the data is
+				# passed to the appropriate (hardware) device.
+				output = self.model(
+					**self.tokenizer(
+						text,
+						add_special_tokens=False,
+						padding="max_length",
+						return_tensors="pt"
+					).to(self.device)
+				)
+			elif isinstance(text, list) and all(isinstance(token, int) for token in text):
+				input_ids = torch.tensor([text]).to(self.device)
+				attention_mask = torch.tensor(
+					[self.get_attention_mask(text, self.tokenizer.pad_token_id)]
 				).to(self.device)
-			)
+				output = self.model(
+					input_ids=input_ids, attention_mask=attention_mask
+				)
+			else:
+				raise ValueError(f"Expected text to be either string or List[int]. Recieved {type(text)}")
 
 			# Compute the embedding by taking the mean of the last 
 			# hidden state tensor across the seq_len axis.
@@ -1704,6 +1716,10 @@ class VectorSearch:
 		
 		# Return the embedding.
 		return embedding
+	
+
+	def get_attention_mask(tokens: List[int], pad_token_id: int):
+		return [0 if t == pad_token_id else 1 for t in tokens]
 
 
 class ReRankSearch:

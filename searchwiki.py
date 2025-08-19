@@ -597,7 +597,7 @@ def test(print_search: bool = False) -> None:
 	# Mean search times for each search engine.
 	# TF-IDF: ~29s
 	# BM25: ~19s
-	# ReRank: ~770s (or 13 min)
+	# ReRank: ~330s (or 6.5 min)
 	# Bottleneck on ReRank is computing the embeddings at runtime
 	# instead of pre-cached embeddings.
 	
