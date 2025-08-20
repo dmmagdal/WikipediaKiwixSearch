@@ -1604,6 +1604,9 @@ class VectorSearch:
 				text_len = chunk["text_len"]
 				# text_chunk = article_text[text_idx: text_idx + text_len]
 				text_chunk = chunk["tokens"]
+				chunk.update(
+					{"text_idx": text_idx, "text_len": text_len}
+				)
 
 				# Embed the text chunk.
 				embedding = self.embed_text(text_chunk)
@@ -1718,7 +1721,7 @@ class VectorSearch:
 		return embedding
 	
 
-	def get_attention_mask(tokens: List[int], pad_token_id: int):
+	def get_attention_mask(self, tokens: List[int], pad_token_id: int):
 		return [0 if t == pad_token_id else 1 for t in tokens]
 
 
