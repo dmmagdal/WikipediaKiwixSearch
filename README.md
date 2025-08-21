@@ -60,6 +60,6 @@ Description: Similar to the WikipediaEnSearch (which operates on the full Wikipe
          - Out of the Flan-T5 family, I've only tested Flan-T5 large.
          - Models still need to be able to run on consumer hardware on full FP32 precision. Check back to the hardware spec notes above.
              - Unfortunately, I'm getting the feeling that min specs will be around the 32GB RAM section.
-             - However, since the models are best run on the GPU and 32GB VRAM is a bit hard to come by, something like 12 GB VRAM would probably be the reasonable.
+             - However, since the models are best run on the GPU and 32GB VRAM is a bit hard to come by, something like 12GB VRAM would probably be the reasonable.
              - If GPU is not viable, then fall back on that 32GB RAM min-spec requirement.
      - I've tried what I can in terms of keeping things reproduceable. This could still be worked on for the testing.
