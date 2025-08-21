@@ -21,8 +21,9 @@ import numpy as np
 import pandas as pd
 import requests
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-from transformers import set_seed
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoModelForSeq2SeqLM
+from transformers import pipeline, set_seed
 
 from search import ReRankSearch, TF_IDF, BM25, VectorSearch
 from search import print_results
@@ -58,6 +59,8 @@ def generate_question(passage: str, model_name: str, device: str) -> str:
 	if not os.path.exists(model_path) or not os.path.isdir(model_path):
 		os.makedirs(model_path, exist_ok=True)
 
+	llama_model = "Llama" in model_id
+
 	# Check for path the be populated with files (weak check). Download
 	# the tokenizer and model and clean up files once done.
 	if len(os.listdir(model_path)) == 0:
@@ -78,11 +81,20 @@ def generate_question(passage: str, model_name: str, device: str) -> str:
 		# Load tokenizer and model.
 		model_id = model_name
 		tokenizer = AutoTokenizer.from_pretrained(
-			model_id, cache_dir=cache_path, device_map=device
+			model_id, 
+			cache_dir=cache_path, 
+			device_map=device, 
+			use_fast=True,
 		)
-		model = AutoModelForCausalLM.from_pretrained(
-			model_id, cache_dir=cache_path, device_map=device
-		)
+
+		if llama_model:
+			model = AutoModelForCausalLM.from_pretrained(
+				model_id, cache_dir=cache_path, device_map=device
+			)
+		else:
+			model = AutoModelForSeq2SeqLM.from_pretrained(
+				model_id, cache_dir=cache_path, device_map=device
+			)
 
 		# Save the tokenizer and model to the save path.
 		tokenizer.save_pretrained(model_path)
@@ -95,44 +107,54 @@ def generate_question(passage: str, model_name: str, device: str) -> str:
 	tokenizer = AutoTokenizer.from_pretrained(
 		model_path, device_map=device
 	)
-	model = AutoModelForCausalLM.from_pretrained(
-		model_path, device_map=device
-	)
+	if llama_model:
+		model = AutoModelForCausalLM.from_pretrained(
+			model_path, device_map=device
+		)
+	else:
+		model = AutoModelForSeq2SeqLM.from_pretrained(
+			model_path, device_map=device
+		)
 
 	# Initialize model pipeline.
+	task = "text-generation" if llama_model else "text2text-generation"
 	pipe = pipeline(
-		"text-generation",
+		task,
 		model=model.to(device),
 		tokenizer=tokenizer,
 	)
 
 	# Prompt.
-	prompt_template = [
-		{
-			"role": "system",
-			"content": "You are a friendly and helpful chatbot who always responds to any query or question asked."
-		},
-		{
-			"role": "user",
-			"content": f"Given the following text passage, create a question that can be answered by information directly found in the text (DO NOT supply the answer):\n\n{passage}"
-		},
-	]
-	prompt_str = pipe.tokenizer.apply_chat_template(
-		prompt_template, 
-		tokenize=False,
-		add_generation_prompt=True,
-	)
+	prompt_str = f"Generate a question from this passage:\n{passage}"
+	# prompt_template = [
+	# 	{
+	# 		"role": "system",
+	# 		"content": "You are a friendly and helpful chatbot who always responds to any query or question asked."
+	# 	},
+	# 	{
+	# 		"role": "user",
+	# 		"content": f"Given the following text passage, create a question that can be answered by information directly found in the text (DO NOT supply the answer):\n\n{passage}"
+	# 	},
+	# ]
+	# prompt_str = pipe.tokenizer.apply_chat_template(
+	# 	prompt_template, 
+	# 	tokenize=False,
+	# 	add_generation_prompt=True,
+	# )
 
 	# Pass prompt to model.
+	# output = pipe(
+	# 	prompt_str,
+	# 	num_return_sequences=1,
+	# 	do_sample=True,
+	# 	temperature=1.25,
+	# 	# top_k=8,
+	# 	top_k=16,
+	# 	top_p=0.90,
+	# 	max_new_tokens=pipe.tokenizer.model_max_length
+	# )
 	output = pipe(
-		prompt_str,
-		num_return_sequences=1,
-		do_sample=True,
-		temperature=1.25,
-		# top_k=8,
-		top_k=16,
-		top_p=0.90,
-		max_new_tokens=pipe.tokenizer.model_max_length
+		prompt_str, max_length=tokenizer.model_max_length
 	)
 
 	# Return output.
