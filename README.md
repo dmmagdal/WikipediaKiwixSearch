@@ -47,9 +47,19 @@ Description: Similar to the WikipediaEnSearch (which operates on the full Wikipe
          - Another possible idea is to have a different chunking algorithm that tries to maximize the number of paragraphs together per embedding.
              - This will handle paragraphs that are only a few words (i.e. titles or sub sections) and merge them with longer passages.
      - Had to copy the key attributes in `corpus_stats.json` into `config.json`. May want to adjust `precompute_sparse_vectors.py` to automatically update the `config.json` directly.
- - Toggle `corpus_size` affects TF-IDF directly when doing `compute_idf()`.
-     - Specifically, for words that are OOV, the smoothed version of the IDF is computed (smoothed version comes from BM25).
- - Really there is a problem with isolating "good" segments of articles from the corpus for testing.
-     - Current "bad" quality passages are primarily tables or references/citations.
-     - Tried doing tricky weighting schemes to favor longer articles and longer passages. Gets better results but still not good in terms of quality.
-     - Applied log to the lengths of the articles so as to balance the weights for sampling the articles. This has also improved results a bit too. 
+         - Toggle `corpus_size` affects TF-IDF directly when doing `compute_idf()`.
+     - For words that are OOV, the smoothed version of the IDF is computed (smoothed version comes from BM25).
+     - Need to rename some variables to align with proper description of items. Specifically, what was once the SHA1 for the articles (in the xml files) is now the entry ID (in the zim files). This has been updated in some areas but needs to be changed in others. Chunk ID is a number (int) and needs to be treated as such in specific circumstances, while also needing to be treated as a string in others.
+ - Automated Testing
+     - Really there is a problem with isolating "good" segments of articles from the corpus for testing.
+         - Current "bad" quality passages are primarily tables or references/citations.
+         - Tried doing tricky weighting schemes to favor longer articles and longer passages. Gets better results but still not good in terms of quality.
+         - Applied log to the lengths of the articles so as to balance the weights for sampling the articles. This has also improved results a bit too. 
+     - Should look at more models to leverage for generating synthetic queries from randomly sampled passages.
+         - So far, I have tried TinyLlama 1.1B, Llama 3.2 1B, BART-large, and Flan-T5. Only Flan-T5 seemed to have provided relatively targeted and on-topic questions compared to the others.
+         - Out of the Flan-T5 family, I've only tested Flan-T5 large.
+         - Models still need to be able to run on consumer hardware on full FP32 precision. Check back to the hardware spec notes above.
+             - Unfortunately, I'm getting the feeling that min specs will be around the 32GB RAM section.
+             - However, since the models are best run on the GPU and 32GB VRAM is a bit hard to come by, something like 12 GB VRAM would probably be the reasonable.
+             - If GPU is not viable, then fall back on that 32GB RAM min-spec requirement.
+     - I've tried what I can in terms of keeping things reproduceable. This could still be worked on for the testing.

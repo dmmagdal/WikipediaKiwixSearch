@@ -16,7 +16,6 @@ import shutil
 import time
 from typing import Any, Dict, List, Tuple
 
-from libzim.reader import Archive
 import numpy as np
 import pandas as pd
 import requests
@@ -59,7 +58,7 @@ def generate_question(passage: str, model_name: str, device: str) -> str:
 	if not os.path.exists(model_path) or not os.path.isdir(model_path):
 		os.makedirs(model_path, exist_ok=True)
 
-	llama_model = "Llama" in model_id
+	llama_model = "Llama" in model_name
 
 	# Check for path the be populated with files (weak check). Download
 	# the tokenizer and model and clean up files once done.
