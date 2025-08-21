@@ -16,6 +16,8 @@
 /sentence-transformers*
 /TinyLlama*
 /meta-llama*
+/google*
+/facebook*
 
 # Database(s).
 /data
