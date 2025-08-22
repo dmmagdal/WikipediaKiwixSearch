@@ -50,6 +50,7 @@ Description: Similar to the WikipediaEnSearch (which operates on the full Wikipe
          - Toggle `corpus_size` affects TF-IDF directly when doing `compute_idf()`.
      - For words that are OOV, the smoothed version of the IDF is computed (smoothed version comes from BM25).
      - Need to rename some variables to align with proper description of items. Specifically, what was once the SHA1 for the articles (in the xml files) is now the entry ID (in the zim files). This has been updated in some areas but needs to be changed in others. Chunk ID is a number (int) and needs to be treated as such in specific circumstances, while also needing to be treated as a string in others.
+     - Also need to update the documentation/notes/docstrings for all files/scripts being used.
  - Automated Testing
      - Really there is a problem with isolating "good" segments of articles from the corpus for testing.
          - Current "bad" quality passages are primarily tables or references/citations.

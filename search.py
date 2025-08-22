@@ -5,6 +5,7 @@
 # Windows/MacOS/Linux
 
 
+from collections import deque
 import concurrent.futures
 import copy
 import cProfile
@@ -22,8 +23,6 @@ import string
 import time
 from typing import List, Dict, Tuple, Union
 
-from bs4 import BeautifulSoup
-from bs4.element import Tag, NavigableString
 import lancedb
 from libzim.reader import Archive
 import msgpack
@@ -32,6 +31,7 @@ import pandas as pd
 import pyarrow as pa
 import torch
 from tqdm import tqdm
+import wikipediaapi
 
 from preprocess import load_model, process_page
 from preprocess import bow_preprocessing, vector_preprocessing
@@ -43,7 +43,14 @@ profiler = cProfile.Profile()
 # here due to recommendation from official python documentation.
 mp.set_start_method("spawn", force=True)
 
+# Initialize seed.
 random.seed(1234)
+
+# Initialize wikipedia-api
+wiki = wikipediaapi.Wikipedia(
+	user_agent="WikiHybridRAG/1.0 (https://example.com; contact@example.com)",
+	language="en"
+)
 
 
 def hashSum(data: str) -> str:
@@ -1678,6 +1685,142 @@ class VectorSearch:
 		return results
 
 
+	def search_graph(self, query: str, max_results: int = 50, document_ids: List[Tuple[str, str]] = []):
+		'''
+		Conducts a search on the wikipedia data with vector search.
+		@param: query str, the raw text that is being queried from the
+			wikipedia data.
+		@param: max_results (int), the maximum number of search results
+			to return.
+		@param: document_ids (List), the list of all document (paths)
+			that are to be queried from the vector database/indices.
+			Can also the the results list from stage 1 search if called
+			from ReRank object.
+		@param: docs_are_results (bool), a flag as to whether to the
+			document_ids list passed in is actually stage 1 search 
+			results. Default is False.
+		@return: returns a list of objects where each object contains
+			an article's path, title, retrieved text, and the slices of
+			that text that is being returned (for BM25 and TF-IDF, 
+			those slices values are for the whole article).
+		'''
+
+		# TODO/NOTE:
+		# Current implementation of search involves "dynamic" embedding
+		# generation (meaning we generate embeddings at search 
+		# runtime). The plan was to originally have preprocess.py 
+		# generate the embeddings for the corpus so that lookup was 
+		# much faster with lancedb, however, the storage required far
+		# exceeded the general storage abilities of most consumer PCs
+		# as well as required substantial runtime to generate all 
+		# embeddings (if waiting around two weeks for the bag-of-words 
+		# preprocessing felt slow, then vector preprocessing was going 
+		# to be glacial in comparison). Hence why dynamic embedding 
+		# generation is implemented but has issues with scaling with 
+		# max_results. For this reason, a hard limit for max_results
+		# and the length of the document ids is set.
+
+		assert len(document_ids) > 0,\
+			f"Argument 'document_ids' is expected to be not empty. Received {document_ids}"
+
+		# If the hard limit for the number of document ids or 
+		# max_results is reached, print an error message and return an
+		# empty results list.
+		MAX_LIMIT = 10_000
+		if len(document_ids) > MAX_LIMIT or max_results > MAX_LIMIT:
+			print(f"Number of document_ids or max_results is too high. Hard limit of {MAX_LIMIT} for either.")
+			return []
+		
+		# Hash the query. This hash will serve as the table name for
+		# the database.
+		table_name = hashSum(query)
+		current_table_names = self.db.table_names()
+		assert table_name not in current_table_names,\
+			f"Table hash was expected to not exist in database"
+		
+		# Initialize the fresh table for the current query.
+		self.db.create_table(table_name, schema=self.schema)
+		table = self.db.open_table(table_name)
+
+		# NOTE:
+		# Assumes query text will exist within model tokenizer's max 
+		# length. There might be complications for longer queries.
+		print("Running Vector search...")
+
+		# Embed the query text.
+		query_embedding = self.embed_text(query)
+
+		# Iterate through the document ids.
+		for doc_title, article_text in tqdm(document_ids):
+			# Preprocess text (chunk it) for embedding.
+			chunk_metadata = vector_preprocessing(
+				article_text, self.config, self.tokenizer
+			)
+			page = wiki.page(doc_title)
+			url = page.fullurl
+
+			# Embed each chunk and update the metadata.
+			for idx, chunk in enumerate(chunk_metadata):
+				# Update/add the metadata for the source filename
+				# and article SHA1.
+				chunk.update(
+					{"file": url + " " + doc_title, "entry_id": 0}
+				)
+
+				# Get original text chunk from text.
+				text_idx = chunk["text_idx"]
+				text_len = chunk["text_len"]
+				# text_chunk = article_text[text_idx: text_idx + text_len]
+				text_chunk = chunk["tokens"]
+				chunk.update(
+					{"text_idx": text_idx, "text_len": text_len}
+				)
+
+				# Embed the text chunk.
+				embedding = self.embed_text(text_chunk)
+
+				# NOTE:
+				# Originally I had embeddings stored into the metadata
+				# dictionary under the "embedding", key but lancddb
+				# requires the embedding data be under the "vector"
+				# name.
+
+				# Update the chunk dictionary with the embedding
+				# and set the value of that chunk in the metadata
+				# list to the (updated) chunk.
+				# chunk.update({"embedding": embedding})
+				chunk.update({"vector": embedding})
+				chunk_metadata[idx] = chunk
+
+		# Add chunk metadata to the vector database. Should be on
+		# "append" mode by default.
+		table.add(chunk_metadata, mode="append")
+
+		# Search the table.
+		results = table.search(query_embedding).limit(max_results)
+		results = results.to_list()
+
+		# Format search results.
+		results = [
+			tuple([
+				result["_distance"], 
+				result["file"], 
+				document_ids[document_ids.index(result["file"].split(" ")[1])][1],
+				[
+					result["text_idx"], 
+					result["text_idx"] + result["text_len"]
+				]
+			])
+			for result in results
+		]
+
+		# Clear table.
+		self.db.drop_table(table_name)
+
+		# Return the search results.
+		return results
+
+
 	def embed_text(self, text: Union[str, List[int]]):
 		# Disable gradients.
 		with torch.no_grad():
@@ -1767,7 +1910,7 @@ class ReRankSearch:
 		self.stage2 = self.vector_search
 
 
-	def search(self, query: str, max_results: int = 50):
+	def search(self, query: str, max_results: int = 50, use_online: bool = False):
 		# Pass the search query to the first stage.
 		stage_1_results = self.stage1.search(
 			query, max_results=max_results
@@ -1777,17 +1920,107 @@ class ReRankSearch:
 		if len(stage_1_results) == 0:
 			return stage_1_results
 
-		# document_ids = [
-		# 	# result["document_path"] for result in stage_1_results
-		# 	result[1] for result in stage_1_results
-		# ]
+		# From the first stage (if we are also using online articles),
+		# isolate all additional articles that are within six degrees 
+		# from each source article.
+		if use_online and len(stage_1_results) > 0:
+			master_graph = dict()
+			for result in stage_1_results:
+				_, _, article_text, _ = result
+				title = self.get_title(article_text)
+			
+				if len(title) == 0:
+					continue
+
+				# NOTE:
+				# Despite wanting to do six-degrees of wikipedia, the
+				# number of articles that would be pulled is 
+				# unreasonable for the search engine, especially given
+				# the amount of filtering that was done just to isolate
+				# the top articles in general before this point. 
+				# Setting the value to three or less is much more 
+				# bareable but still leaves a large number of articles.
+				# Have to consider time it takes to embed the text from
+				# each article.
+				# Possible number of articles:
+				# len(document_ids) x (top_k_links ^ n)
+
+				n = 2#6
+				top_k_links = 5
+				graph = self.get_nth_degree(title, n, top_k_links)
+				master_graph.update(graph)
+
+			# Pass the articles through the vector search (no need to
+			# call vector search below because those articles are 
+			# included).
+			flattened_graph = [
+				(title, data["text"]) 
+				for title, data in master_graph.items()
+			]
+			stage_2_results = self.stage2.search_graph(
+				query, 
+				max_results=max_results, 
+				document_ids=flattened_graph
+			)
+
+			return stage_2_results
 
 		# From the first stage, isolate the document paths to target in
 		# the vector search.
 		stage_2_results = self.stage2.search(
-			query, max_results=max_results, document_ids=stage_1_results,
+			query, 
+			max_results=max_results, 
+			document_ids=stage_1_results,
 			docs_are_results=True
 		)
 
 		# Return the search results from the second stage.
 		return stage_2_results
+	
+
+	def get_title(self, article_text: str) -> str:
+		# Get the title (first non-empty line) from an article's text.
+		for line in article_text.splitlines():
+			if line.strip():
+				return line
+			
+		return ""
+	
+
+	def get_nth_degree(self, start_title: str, max_depth: int = 1, links_per_page: int = 1) -> Dict[str, Dict[str, str]]:
+		# Conduct a BFS search of linked articles.
+		visited = set()
+		graph = dict()
+		queue = deque([(start_title, 0)])	# (Title, depth) in queue
+
+		while queue:
+			title, depth = queue.popleft()
+			if title in visited or depth > max_depth:
+				continue
+
+			visited.add(title)
+
+			print(f"Fetching: {title} (depth {depth})")
+
+			# Load page.
+			page = wiki.page(title)
+			if not page.exists():
+				continue
+
+			# Extract text and links.
+			text = page.text
+			links = sorted(list(page.links.keys()))[:links_per_page]
+
+			# Save.
+			graph[title] = {
+				"text": text,
+				"links": links
+			}
+
+			# Enqueue links.
+			for link in links:
+				if link not in visited:
+					queue.append((link, depth + 1))
+
+		# Return the graph.
+		return graph

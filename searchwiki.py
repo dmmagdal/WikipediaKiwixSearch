@@ -23,6 +23,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import AutoModelForSeq2SeqLM
 from transformers import pipeline, set_seed
+import wikipediaapi
 
 from search import ReRankSearch, TF_IDF, BM25, VectorSearch
 from search import print_results
@@ -30,11 +31,55 @@ from search import load_data_from_msgpack, load_data_from_json
 from search import load_article_text
 
 
+# Initialize seed.
 seed = 1234
 random.seed(seed)
 np.random.seed(seed)
 set_seed(seed)
 # torch.use_deterministic_algorithms(True)
+
+
+# Initialize wikipedia-api
+wiki = wikipediaapi.Wikipedia(
+	user_agent="WikiHybridRAG/1.0 (https://example.com; contact@example.com)",
+	language="en"
+)
+
+
+def get_random_wikipedia_article() -> Tuple[str, str]:
+	'''
+	Query (full) Wikipedia (online) for a random article.
+	@param: takes no arguments.
+	@return: returns a tuple containing the title and the article text.
+	'''
+	# Initial request to get a random article.
+	response = requests.get(
+		"https://en.wikipedia.org/w/api.php",
+		params={
+			"action": "query",
+			"list": "random",
+			"rnnamespace": 0,  # namespace 0 = articles only
+			"rnlimit": 1,
+			"format": "json"
+		}
+	)
+	data = response.json()
+	title = data["query"]["random"][0]["title"]
+
+	# Now fetch the page content using wikipedia-api.
+	page = wiki.page(title)
+	return page.title, page.text
+
+
+def get_online_wikipedia_article(title: str) -> Tuple[str, str]:
+	'''
+	Query (full) Wikipedia (online) for the target article.
+	@param: title (str). the title of the article to query.
+	@return: returns a tuple containing the title and the article text.
+	'''
+	# Fetch the page content using wikipedia-api.
+	page = wiki.page(title)
+	return page.title, page.text
 
 
 def generate_question(passage: str, model_name: str, device: str) -> str:
@@ -160,7 +205,7 @@ def generate_question(passage: str, model_name: str, device: str) -> str:
 	return output[0]["generated_text"].replace(prompt_str, "")
 
 
-def evaluate_search_results(results: List[Tuple[float, str, str, List[int]]], selected_doc: str) -> None:
+def evaluate_search_results(results: List[Tuple[float, str, str, List[int]]], selected_doc: str, use_online: bool = False) -> None:
 	'''
 	Evaluate whether the target document appears within the search 
 		top-n results for various values of n. These results are
@@ -173,6 +218,10 @@ def evaluate_search_results(results: List[Tuple[float, str, str, List[int]]], se
 	'''
 	# Isolate the documents (file + sha) returned in the results. 
 	result_docs = [result[1] for result in results]
+
+	if use_online:
+		# For online documents, just get the title for exact matching.
+		result_docs = [result.split(" ")[-1] for result in result_docs]
 
 	# Acquire the position of the target/expected document from the
 	# results documents list. Position is -1 if it does not appear in
@@ -409,11 +458,13 @@ def get_all_articles(config: Dict[str, Any]) -> List[str]:
 	return articles
 
 
-def test(print_search: bool = False) -> None:
+def test(print_search: bool = False, test_hybrid: bool = False) -> None:
 	'''
 	Test each of the search processes on the wikipedia dataset.
 	@param: print_search (bool), whether to print the search results 
 		during the tests. Is False by default.
+	@param: test_hybrid (bool), whether to run the tests for hybrid
+		offline/online search. Is False by default.
 	@return: returns nothing.
 	'''
 	# Input values to search engines.
@@ -662,29 +713,174 @@ def test(print_search: bool = False) -> None:
 		avg_search_time = sum(search_times) / len(search_times)
 		print(f"Average search time: {avg_search_time:.6f} seconds")
 		print("=" * 72)
+	
+	if not test_hybrid:
+		shutil.rmtree(index_dir)
+		exit(0)
+
+	
+	###################################################################
+	# GENERAL QUERY + ONLINE 
+	###################################################################
+	# Randomly sample 5 articles from wikipedia (online).
+	online_articles = [
+		get_random_wikipedia_article() for _ in range(5)
+	]
+
+	# Get random paragraphs from those articles.
+	query_online_passages = [
+		get_random_paragraph_from_article(text)
+		for _, text in online_articles
+	]
+
+	# Generate abstract queries for each of these random paragraphs.
+	print("Generating abstract questions from the same passages.")
+	start = time.perf_counter()
+	online_abstract_query_text = [
+		generate_question(query, model_name, device) 
+		for query in query_online_passages
+	]
+	end = time.perf_counter()
+	elapsed = end - start
+	print(f"Questions generated in {elapsed:.6f} seconds")
+	print()
+
+	# Print out the isolated query passages.
+	print("ABSTRACT QUERY PASSAGES:")
+
+	for idx, query_passage in enumerate(online_abstract_query_text):
+		print(online_articles[idx][0])
+		print(f"Abstract Question:\n{query_passage}")
+		print()
+		print(f"Passage:\n{query_passages[idx]}")
+		print()
+
+	print("=" * 72)
+	print("Testing hybrid search engine:")
+	
+	# Iterate through each search engine.
+	for name, engine in search_engines:
+		# Skip all search engines except for rerank.
+		if "rerank" not in name:
+			continue
+
+		# Search engine banner text.
+		print(f"Searching with {name}")
+		search_times = []
+
+		# Iterate through each passage and run the search with the 
+		# search engine.
+		for idx, query in enumerate(online_abstract_query_text):
+			# Run the search and track the time it takes to run the 
+			# search.
+			query_search_start = time.perf_counter()
+			results = engine.search(query, use_online=True)
+			query_search_end = time.perf_counter()
+			query_search_elapsed = query_search_end - query_search_start
+
+			# Print out the search time.
+			print(f"Search returned in {query_search_elapsed:.6f} seconds")
+			print()
+
+			# Print out the search results if specified.
+			if print_search:
+				print_results(results, search_type=name)
+
+			# Append the search time to a list.
+			search_times.append(query_search_elapsed)
+
+			# Evaluate the search results.
+			evaluate_search_results(
+				results, selected_docs[idx][0], 
+				use_online=True
+			)
+			print()
+
+		# Compute and print the average search time.
+		avg_search_time = sum(search_times) / len(search_times)
+		print(f"Average search time: {avg_search_time:.6f} seconds")
+		print("=" * 72)
 
 	shutil.rmtree(index_dir)
 
 	exit(0)
 
 
-def search_loop() -> None:
+def search_loop(search_engine: str) -> None:
 	'''
 	Run an infinite loop (or until the exit phrase is specified) to
 		perform search on wikipedia.
-	@param: takes no arguments.
+	@param: search_engine (str), which search engine to use.
 	@return: returns nothing.
 	'''
+	# Input values to search engines.
+	with open("config.json", "r") as f:
+		config = json.load(f)
 
-	# Read in the title text (ascii art).
-	with open("title.txt", "r") as f:
-		title = f.read()
+	bow_dir = "./metadata/bag_of_words"
+	index_dir = "./test-temp"
+
+	preprocessing_paths = config["preprocessing"]
+	corpus_staging = os.path.join(
+		preprocessing_paths["staging_corpus_path"], 
+		"corpus_cache",
+	)
+	corpus_path = os.path.join(corpus_staging, "corpus_stats.json")
+
+	# Load corpus stats from the corpus path JSON if it exists. Use the
+	# config JSON if the corpus JSON is not available.
+	if os.path.exists(corpus_path):
+		with open(corpus_path, "r") as f:
+			corpus_stats = json.load(f)
+			tfidf_corpus_size = corpus_stats["corpus_size"]
+			bm25_corpus_size = corpus_stats["corpus_size"]
+			bm25_avg_doc_len = corpus_stats["avg_doc_len"]
+	else:
+		tfidf_corpus_size = config["tf-idf_config"]["corpus_size"]
+		bm25_corpus_size = config["bm25_config"]["corpus_size"]
+		bm25_avg_doc_len = config["bm25_config"]["avg_doc_len"]
+
+	model = "bert"
+	device = "cpu"
+	if torch.cuda.is_available():
+		device = "cuda"
+	# elif torch.backends.mps.is_available():
+	# 	device = "mps"
+
+	if search_engine == "tf-idf":
+		engine = TF_IDF(bow_dir, corpus_size=tfidf_corpus_size)
+	elif search_engine == "bm25":
+		engine = BM25(
+		bow_dir, corpus_size=bm25_corpus_size, 
+		avg_doc_len=bm25_avg_doc_len
+	)
+	elif search_engine == "rerank":
+		engine = ReRankSearch(bow_dir, index_dir, model, device=device)
+	else:
+		print(f"Used invalid search engine: {search_engine}.")
+		exit(1)
 
 	exit_phrase = "Exit Search"
-	print(title)
-	print()
 	search_query = input("> ")
-	pass
+	while search_query != exit_phrase:
+		query_search_start = time.perf_counter()
+		results = engine.search(search_query, max_results=10)
+		query_search_end = time.perf_counter()
+		query_search_elapsed = query_search_end - query_search_start
+
+		# Print out the search time.
+		print(f"Search returned in {query_search_elapsed:.6f} seconds")
+		print()
+		
+		if len(results) == 0:
+			print("Search returned no results/articles.")
+		else:
+			print_results(results, search_type=search_engine)
+
+		# Get the next query.
+		search_query = input("> ")
+
+	exit(0)
 
 
 def main() -> None:
@@ -706,14 +902,26 @@ def main() -> None:
 		action="store_true",
 		help="Specify whether to print the search results during the search engine tests. Default is false/not specified."
 	)
+	parser.add_argument(
+		"--test_hybrid",
+		action="store_true",
+		help="Specify whether to try and test hybrid online/offline search. Default is false/not specified."
+	)
+	parser.add_argument(
+		"--search_engine",
+		type=str,
+		default="tf-idf",
+		choices=["tf-idf", "bm25", "rerank"],
+		help="Specify which search engine to use. Default is 'tf-idf'."
+	)
 	args = parser.parse_args()
 
 	# Depending on the arguments, either run the search tests or just
 	# use the general search function.
 	if args.test:
-		test()
+		test(args.print_results, args.test_hybrid)
 	else:
-		search_loop()
+		search_loop(args.search_engine)
 
 	# Exit the program.
 	exit(0)
