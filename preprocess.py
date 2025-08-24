@@ -1027,7 +1027,7 @@ def process_articles(args: Namespace, device: str, file: str, entry_ids: List[in
 			# text for each chunk and the length of the chunk).
 			chunk_metadata = vector_preprocessing(
 				article_text_v_db, config, tokenizer, 
-				recursive_split=True
+				# recursive_split=True
 			)
 
 			# Disable gradients.
@@ -1041,19 +1041,32 @@ def process_articles(args: Namespace, device: str, file: str, entry_ids: List[in
 					# Get original text chunk from text.
 					text_idx = chunk["text_idx"]
 					text_len = chunk["text_len"]
-					text_chunk = article_text_v_db[text_idx: text_idx + text_len]
 
 					# Pass original text chunk to tokenizer. Ensure the
 					# data is passed to the appropriate (hardware)
 					# device.
-					output = model(
-						**tokenizer(
-							text_chunk,
-							add_special_tokens=False,
-							padding="max_length",
-							return_tensors="pt"
+					if isinstance(chunk["tokens"], str):
+						text_chunk = article_text_v_db[text_idx: text_idx + text_len]
+						output = model(
+							**tokenizer(
+								text_chunk,
+								add_special_tokens=False,
+								padding="max_length",
+								return_tensors="pt"
+							).to(device)
+						)
+					elif isinstance(chunk["tokens"], list) and all(isinstance(token, int) for token in chunk["tokens"]):
+						pad_token_id = tokenizer.pad_token_id
+						input_ids = torch.tensor([chunk["tokens"]]).to(device)
+						attention_mask = torch.tensor(
+							[[0 if t == pad_token_id else 1 for t in chunk["tokens"]]]
 						).to(device)
-					)
+						output = model(
+							input_ids=input_ids,
+							attention_mask=attention_mask,
+						)
+					else:
+						raise ValueError(f"Expected text to be either string or List[int]. Recieved {type(text)}")
 
 					# Compute the embedding by taking the mean of the
 					# last hidden state tensor across the seq_len axis.
