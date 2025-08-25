@@ -7,9 +7,11 @@
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 import json
 import multiprocessing as mp
 import os
+import time
 from typing import List
 
 from bs4 import BeautifulSoup
@@ -42,11 +44,6 @@ def main():
 		help="How many threads to use. Default is 1."
 	)
 	parser.add_argument(
-		"--update",
-		action="store_true",
-        help="Whether to update the table vs purge it and start from scratch. Default is false/not specified."
-	)
-	parser.add_argument(
 		"--restart",
 		action="store_true",
         help="Whether to restart the embedding process from scratch. Default is false/not specified."
@@ -62,7 +59,6 @@ def main():
 	args = parser.parse_args()
 	num_proc = args.num_proc
 	num_thread = args.num_thread
-	update = args.update
 	restart = args.restart
 	batch_size = args.batch_size
 
@@ -83,7 +79,7 @@ def main():
 	db_uri = vector_search_config["db_uri"]
 	summary_table = vector_search_config["summary_table"]
 
-	# Load the tokenizer and model
+	# Load the tokenizer and model.
 	device = "cpu"
 	if torch.cuda.is_available():
 		device = "cuda"
@@ -120,21 +116,13 @@ def main():
 		pa.field("vector", pa.list_(pa.float32(), dims))
 	])
 
-	# If the table is already initialized, but the page has not been
-	# marked as recorded (and therefore the rest of this
-	# preprocessing would not occur if it were marked), drop
-	# that table (this assumes that the data loading for that 
-	# table is incomplete).
-
 	# Refresh the table (drop it) if it exists but we're not updating 
 	# it.
 	current_tables = db.table_names()
-	# if summary_table in current_tables and restart:
-	# 	db.drop_table(summary_table)
-	if summary_table in current_tables:
+	if summary_table in current_tables and restart:
 		db.drop_table(summary_table)
 
-	# Initialize the fresh table for the current page.
+	# Initialize the fresh table.
 	if summary_table not in current_tables:
 		db.create_table(summary_table, schema=schema)
 
@@ -165,10 +153,27 @@ def main():
 		archive = Archive(file)
 		entry_ids = [i for i in range(archive.article_count)]
 
+		# Identify any existing entry IDs that have already been
+		# catalogued (if we are not restarting from scratch),
+		if not restart:
+			# Table query (export to pandas dataframe and work from 
+			# there).
+			table_df = table.to_pandas()
+			existing_ids = table_df[
+				(table_df["file"] == file) & (table_df["entry_id"].isin(entry_ids))
+			]["entry_id"].tolist()
+
+			# Remove the found existing entry IDs from the list.
+			entry_ids = list(set(entry_ids) - set(existing_ids))
+
+		# Initialize an empty batch buffer.
 		batch = []
 
+		# Iterate over the entry IDs.
 		for entry_id in tqdm(entry_ids):
+			# Isolate the entry and path/url.
 			entry = archive._get_entry_by_id(entry_id)
+			title = entry.title
 			url = entry.path
 
 			# Skip if the article is a redirect or asset.
@@ -198,7 +203,7 @@ def main():
 			# (increment that by 1 to be the starting index for the 
 			# below for-loop).
 			article_lines = article_text.splitlines()
-			start_idx = article_lines.index(entry.title) + 1
+			start_idx = article_lines.index(title) + 1 if title in article_lines else 0
 
 			# Iterate from the starting index through the length of the
 			# article.
@@ -218,7 +223,7 @@ def main():
 			if first_paragraph == "":
 				first_paragraph = entry.title
 
-			# Tokenize,
+			# Tokenize.
 			tokens = vector_preprocessing(
 				first_paragraph, config, tokenizer, 
 				recursive_split=False
@@ -271,6 +276,8 @@ def main():
 				# Convert embeddings from torch tensor to numpy array.
 				embeddings = embeddings.numpy()
 
+				# Recompile the metadata with the embeddings for chunk
+				# writing to the table.
 				metadata = []
 				for idx, batch_data in enumerate(batch):
 					file, entry_id, _, batch_tokens = batch_data
@@ -286,8 +293,28 @@ def main():
 					)
 				table.add(metadata)
 
+				# Clean up old manifest files (this can take up a lot
+				# of space given the number of transactions/writes).
+				table.optimize(
+					cleanup_older_than=timedelta(seconds=30)
+				)
+				table.cleanup_old_versions(
+					older_than=timedelta(seconds=30)
+				)
+
 				# Clear the batch buffer.
 				batch = []
+
+	# Clean up old manifest files (again).
+	table.optimize(cleanup_older_than=timedelta(seconds=60))
+	table.cleanup_old_versions(older_than=timedelta(seconds=60))
+
+	# NOTE:
+	# The table clean up helps cut back on storage. You can't just
+	# remove the _versions or _transactions folders because that will
+	# break the table. Highly recommend instilling this clean up on ALL
+	# areas where tables are modified (add, update, delete, etc). Is not
+	# necessary to do this for query (search) operations on the table.
 
 	# Exit the program.
 	exit(0)
