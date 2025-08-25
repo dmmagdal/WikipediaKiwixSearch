@@ -473,7 +473,7 @@ def main():
 			basename = os.path.basename(file)
 			print(f"Processing {basename} ({idx + 1}/{len(data_xml_files)})")
 
-			# Load the file and get the list of entry ites.
+			# Load the file and get the list of entry items.
 			archive = Archive(file)
 			entry_ids = [i for i in range(archive.article_count)]
 

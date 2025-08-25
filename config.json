@@ -27,7 +27,8 @@
     },
     "vector-search_config": {
         "model": "bert",
-        "db_uri": "./vector_data/vector_db"
+        "db_uri": "./vector_data/vector_db",
+        "summary_table": "article_summaries"
     },
     "preprocessing": {
         "token_overlap": 64,
